@@ -15,16 +15,20 @@ interface ReactivePanelProps {
   log: (msg: string) => void;
 }
 
-interface ThemePreset {
+export interface ThemePreset {
   name: string;
   desc: string;
   base: string;
   strike: string;
   style: ReactiveStyle;
   rainbow?: boolean;
+  isCustom?: boolean;
 }
 
-const THEME_PRESETS: ThemePreset[] = [
+const STORAGE_ACTIVE_KEY = 'aula.f75.active_reactive_config';
+const STORAGE_PRESETS_KEY = 'aula.f75.custom_reactive_presets';
+
+const CURATED_PRESETS: ThemePreset[] = [
   {
     name: 'Ocean Deep & Amber',
     desc: 'Solid oceanic teal with vivid golden amber splashes',
@@ -71,19 +75,85 @@ const THEME_PRESETS: ThemePreset[] = [
 ];
 
 export function ReactivePanel({ device, log }: ReactivePanelProps) {
-  const [config, setConfig] = useState<ReactiveConfig>(DEFAULT_REACTIVE_CONFIG);
+  const [config, setConfig] = useState<ReactiveConfig>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem(STORAGE_ACTIVE_KEY);
+        if (saved) return JSON.parse(saved);
+      } catch { /* use default */ }
+    }
+    return DEFAULT_REACTIVE_CONFIG;
+  });
+
+  const [customPresets, setCustomPresets] = useState<ThemePreset[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem(STORAGE_PRESETS_KEY);
+        if (saved) return JSON.parse(saved);
+      } catch { /* use empty */ }
+    }
+    return [];
+  });
+
+  const [newPresetName, setNewPresetName] = useState('');
+  const [isSavingPreset, setIsSavingPreset] = useState(false);
   const [running, setRunning] = useState(false);
   const [lastKeyPressed, setLastKeyPressed] = useState<string | null>(null);
   const [fps] = useState(30);
 
-  const engineRef = useRef<ReactiveEngine>(new ReactiveEngine(DEFAULT_REACTIVE_CONFIG));
+  const engineRef = useRef<ReactiveEngine>(new ReactiveEngine(config));
   const runningRef = useRef(false);
   const rafRef = useRef<number | null>(null);
+  const sandboxInputRef = useRef<HTMLInputElement>(null);
 
-  // Synchronize engine config with React state
+  // Keep engine config synchronized and persist active config
   useEffect(() => {
     engineRef.current.updateConfig(config);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(STORAGE_ACTIVE_KEY, JSON.stringify(config));
+      } catch { /* ignore */ }
+    }
   }, [config]);
+
+  // Persist custom presets
+  const saveCustomPresetsToStorage = (presets: ThemePreset[]) => {
+    setCustomPresets(presets);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(STORAGE_PRESETS_KEY, JSON.stringify(presets));
+      } catch { /* ignore */ }
+    }
+  };
+
+  const handleSaveNewPreset = (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = newPresetName.trim();
+    if (!name) return;
+
+    const newPreset: ThemePreset = {
+      name,
+      desc: `Custom: Base ${config.baseColorHex} → Strike ${config.strikeColorHex}`,
+      base: config.baseColorHex,
+      strike: config.strikeColorHex,
+      style: config.style,
+      rainbow: config.rainbowStrike,
+      isCustom: true,
+    };
+
+    const updated = [newPreset, ...customPresets.filter(p => p.name !== name)];
+    saveCustomPresetsToStorage(updated);
+    setNewPresetName('');
+    setIsSavingPreset(false);
+    log(`Saved custom preset: "${name}"`);
+  };
+
+  const handleDeletePreset = (nameToDelete: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const updated = customPresets.filter(p => p.name !== nameToDelete);
+    saveCustomPresetsToStorage(updated);
+    log(`Deleted custom preset: "${nameToDelete}"`);
+  };
 
   const stop = useCallback(async () => {
     runningRef.current = false;
@@ -127,6 +197,11 @@ export function ReactivePanel({ device, log }: ReactivePanelProps) {
 
     if (runningRef.current) await stop();
 
+    // Blur active buttons so pressing Space doesn't re-trigger clicks
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+
     const useWireless = isWirelessDevice(device);
     log(`Starting Reactive Engine (${useWireless ? '2.4GHz wireless' : 'USB-C Direct Stream'})`);
 
@@ -136,6 +211,11 @@ export function ReactivePanel({ device, log }: ReactivePanelProps) {
 
     runningRef.current = true;
     setRunning(true);
+
+    // Auto-focus sandbox input for immediate natural typing
+    setTimeout(() => {
+      sandboxInputRef.current?.focus();
+    }, 50);
 
     const period = 1000 / fps;
     let lastFrame = 0;
@@ -169,9 +249,16 @@ export function ReactivePanel({ device, log }: ReactivePanelProps) {
     rafRef.current = requestAnimationFrame(loop);
   }, [device, fps, log, stop]);
 
-  // Global keydown capture while active
+  // Global keydown capture with Space safety
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Prevent Spacebar from clicking currently focused buttons
+      if (e.code === 'Space' && document.activeElement instanceof HTMLButtonElement) {
+        e.preventDefault();
+        document.activeElement.blur();
+        sandboxInputRef.current?.focus();
+      }
+
       if (!runningRef.current) return;
       const keyCoord = engineRef.current.registerKeypress(e.code);
       if (keyCoord) {
@@ -271,15 +358,89 @@ export function ReactivePanel({ device, log }: ReactivePanelProps) {
         </div>
       </div>
 
-      {/* Theme Presets */}
+      {/* Theme Presets & Custom Presets */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-3">
-          1-Click Curated Presets
-        </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
-          {THEME_PRESETS.map((p, i) => (
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+            Presets & Custom Profiles
+          </h3>
+          <button
+            onClick={() => setIsSavingPreset(!isSavingPreset)}
+            className="text-xs text-cyan-400 hover:text-cyan-300 font-medium flex items-center gap-1 cursor-pointer transition-colors"
+          >
+            <span>💾</span> {isSavingPreset ? 'Cancel' : 'Save Current as Preset'}
+          </button>
+        </div>
+
+        {/* Save Preset Inline Form */}
+        {isSavingPreset && (
+          <form onSubmit={handleSaveNewPreset} className="mb-4 p-3 bg-zinc-950 border border-cyan-800/80 rounded-lg flex items-center gap-2">
+            <input
+              type="text"
+              placeholder="Enter preset name (e.g. My Warm Office)..."
+              value={newPresetName}
+              onChange={e => setNewPresetName(e.target.value)}
+              autoFocus
+              className="flex-1 bg-zinc-900 border border-zinc-700 rounded px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-cyan-500"
+            />
             <button
-              key={i}
+              type="submit"
+              disabled={!newPresetName.trim()}
+              className="px-3 py-1.5 rounded bg-cyan-600 hover:bg-cyan-500 disabled:bg-zinc-800 text-white text-xs font-medium cursor-pointer disabled:cursor-not-allowed transition-colors"
+            >
+              Save Preset
+            </button>
+          </form>
+        )}
+
+        {/* Presets Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+          {/* Custom Presets first */}
+          {customPresets.map((p, i) => (
+            <button
+              key={`custom-${i}`}
+              onClick={() => applyPreset(p)}
+              className="flex items-center justify-between p-2.5 rounded-lg border border-cyan-800/60 hover:border-cyan-600 bg-cyan-950/20 hover:bg-cyan-900/30 transition-all text-left cursor-pointer group"
+            >
+              <div className="flex items-center gap-3 truncate">
+                <div className="flex -space-x-1.5 shrink-0">
+                  <span
+                    className="w-5 h-5 rounded-full border border-zinc-900"
+                    style={{ backgroundColor: p.base }}
+                    title="Base Backlight"
+                  />
+                  <span
+                    className="w-5 h-5 rounded-full border border-zinc-900"
+                    style={{
+                      background: p.rainbow
+                        ? 'linear-gradient(45deg, red, yellow, green, cyan, blue, magenta)'
+                        : p.strike,
+                    }}
+                    title="Strike Accent"
+                  />
+                </div>
+                <div className="truncate">
+                  <div className="text-xs font-medium text-cyan-200 group-hover:text-white truncate flex items-center gap-1.5">
+                    <span>{p.name}</span>
+                    <span className="text-[0.6rem] bg-cyan-900/60 text-cyan-300 px-1 py-0.2 rounded">Custom</span>
+                  </div>
+                  <div className="text-[0.65rem] text-zinc-400 truncate">{p.desc}</div>
+                </div>
+              </div>
+              <button
+                onClick={(e) => handleDeletePreset(p.name, e)}
+                title="Delete preset"
+                className="opacity-0 group-hover:opacity-100 p-1 text-zinc-500 hover:text-rose-400 transition-opacity ml-2"
+              >
+                ✕
+              </button>
+            </button>
+          ))}
+
+          {/* Curated Presets */}
+          {CURATED_PRESETS.map((p, i) => (
+            <button
+              key={`curated-${i}`}
               onClick={() => applyPreset(p)}
               className="flex items-center gap-3 p-2.5 rounded-lg border border-zinc-800 hover:border-zinc-700 bg-zinc-950/60 hover:bg-zinc-800/50 transition-all text-left cursor-pointer group"
             >
@@ -310,7 +471,7 @@ export function ReactivePanel({ device, log }: ReactivePanelProps) {
         </div>
       </div>
 
-      {/* Color Tuning & Styles */}
+      {/* Color Tuning & Dynamics */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         {/* Color Tuning */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col gap-4">
@@ -459,13 +620,14 @@ export function ReactivePanel({ device, log }: ReactivePanelProps) {
               )}
             </div>
             <input
+              ref={sandboxInputRef}
               type="text"
-              placeholder={running ? "Type here to watch the keyboard light up live..." : "Start reactive mode first, then type here..."}
+              placeholder={running ? "Type freely here (Space bar & all keys active)..." : "Start reactive mode first, then type here..."}
               disabled={!running}
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-zinc-600 disabled:opacity-50"
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-cyan-500 disabled:opacity-50"
             />
             <span className="text-[0.65rem] text-zinc-500">
-              *While Reactive Mode is running, any key pressed anywhere on the keyboard triggers live splash physics!
+              *All settings auto-save instantly. Space bar will now type naturally without stopping the engine!
             </span>
           </div>
         </div>
