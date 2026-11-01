@@ -7,17 +7,19 @@ import { EffectsPanel } from '@/components/EffectsPanel';
 import { PerKeyPanel } from '@/components/PerKeyPanel';
 import { SettingsPanel } from '@/components/SettingsPanel';
 import { AnimationsPanel } from '@/components/AnimationsPanel';
+import { ReactivePanel } from '@/components/ReactivePanel';
 import { RemapPanel } from '@/components/RemapPanel';
 import { MacrosPanel } from '@/components/MacrosPanel';
 import { LogPanel } from '@/components/LogPanel';
 
-type Tab = 'effects' | 'perkey' | 'animations' | 'settings' | 'remap' | 'macros';
+type Tab = 'reactive' | 'effects' | 'perkey' | 'animations' | 'settings' | 'remap' | 'macros';
 
 export default function Home() {
   const kb = useKeyboard();
-  const [tab, setTab] = useState<Tab>('effects');
+  const [tab, setTab] = useState<Tab>('reactive');
 
   const tabs: { id: Tab; label: string }[] = [
+    { id: 'reactive', label: '⚡ Reactive Studio' },
     { id: 'effects', label: 'Effects' },
     { id: 'perkey', label: 'Per-Key' },
     { id: 'animations', label: 'Animations' },
@@ -65,6 +67,7 @@ export default function Home() {
 
       {/* Panel content */}
       <div className="w-full max-w-[920px] mb-6">
+        {tab === 'reactive' && <ReactivePanel device={kb.device} log={kb.log} />}
         {tab === 'effects' && <EffectsPanel onApply={kb.doSetEffect} />}
         {tab === 'perkey' && <PerKeyPanel onApply={kb.doApplyPerKey} />}
         {tab === 'animations' && (
